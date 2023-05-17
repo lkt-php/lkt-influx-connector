@@ -3,7 +3,6 @@
 namespace Lkt\DatabaseConnectors;
 
 use InfluxDB2\Client;
-use InfluxDB2\Model\BucketRetentionRules;
 use InfluxDB2\Model\Organization;
 use InfluxDB2\Model\PostBucketRequest;
 use InfluxDB2\Model\WritePrecision;
@@ -11,6 +10,7 @@ use InfluxDB2\Point;
 use InfluxDB2\Service\BucketsService;
 use InfluxDB2\Service\OrganizationsService;
 use Lkt\DatabaseConnectors\Cache\QueryCache;
+use Lkt\Factory\Schemas\ComputedFields\AbstractComputedField;
 use Lkt\Factory\Schemas\Fields\AbstractField;
 use Lkt\Factory\Schemas\Fields\BooleanField;
 use Lkt\Factory\Schemas\Fields\DateTimeField;
@@ -26,9 +26,7 @@ use Lkt\Factory\Schemas\Fields\RelatedField;
 use Lkt\Factory\Schemas\Fields\RelatedKeysField;
 use Lkt\Factory\Schemas\Fields\StringField;
 use Lkt\Factory\Schemas\Fields\UnixTimeStampField;
-use Lkt\Factory\Schemas\ComputedFields\AbstractComputedField;
 use Lkt\Factory\Schemas\Schema;
-use Lkt\Locale\Locale;
 use Lkt\QueryBuilding\Query;
 
 class InfluxConnector extends DatabaseConnector
@@ -42,6 +40,9 @@ class InfluxConnector extends DatabaseConnector
     protected string $rememberTotal = '';
 
     protected Client|null $client = null;
+
+    protected array $cachedBuckedExists = [];
+    protected array $cachedOrgExists = [];
 
     public function setRememberTotal(string $rememberTotal): InfluxConnector
     {
@@ -102,7 +103,6 @@ class InfluxConnector extends DatabaseConnector
 //            $dsn = sprintf("influxdb://{$this->user}:{$this->password}@%s:%s/%s", $this->host, $this->port, $this->database);
 //            $this->connectedDb = Client::fromDSN($dsn);
         } catch (\Exception $e) {
-            dd($e);
             die ('Connection to database failed');
         }
         return $this;
@@ -168,29 +168,36 @@ class InfluxConnector extends DatabaseConnector
 
     public function findMyOrg(): ?Organization
     {
+        if (isset($this->cachedOrgExists[$this->client->options["org"]])) return $this->cachedOrgExists[$this->client->options["org"]];
         $this->connect();
         /** @var OrganizationsService $orgService */
         $orgService = $this->client->createService(OrganizationsService::class);
         $orgs = $orgService->getOrgs()->getOrgs();
         foreach ($orgs as $org) {
             if ($org->getName() == $this->client->options["org"]) {
+                $this->cachedOrgExists[$this->client->options["org"]] = $org;
                 return $org;
             }
         }
+        $this->cachedOrgExists[$this->client->options["org"]] = null;
         return null;
     }
 
     public function bucketExists(string $bucket): bool
     {
+        if (isset($this->cachedBuckedExists[$bucket])) return $this->cachedBuckedExists[$bucket];
+
         $this->connect();
         /** @var BucketsService $orgService */
         $orgService = $this->client->createService(BucketsService::class);
         $existingBuckets = $orgService->getBuckets()->getBuckets();
         foreach ($existingBuckets as $existingBucket) {
             if ($existingBucket->getName() == $bucket) {
+                $this->cachedBuckedExists[$bucket] = true;
                 return true;
             }
         }
+        $this->cachedBuckedExists[$bucket] = false;
         return false;
     }
 
@@ -198,9 +205,9 @@ class InfluxConnector extends DatabaseConnector
     {
         $this->connect();
 
-//        if (!$this->bucketExists($this->bucket)) {
-//            $this->createBucket($this->bucket);
-//        }
+        if (!$this->bucketExists($this->bucket)) {
+            $this->createBucket($this->bucket);
+        }
 
         $range = [];
         $start = trim($start);
