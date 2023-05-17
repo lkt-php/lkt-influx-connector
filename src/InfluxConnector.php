@@ -52,13 +52,10 @@ class InfluxConnector extends DatabaseConnector
 
     public function connect(): DatabaseConnector
     {
-        if ($this->client !== null) {
-            return $this;
-        }
+        if ($this->client !== null) return $this;
 
         // Perform the connection
         try {
-
             $this->client = new Client([
                 'url' => "$this->host:{$this->port}",
                 'token' => $this->token,
@@ -66,42 +63,6 @@ class InfluxConnector extends DatabaseConnector
                 'bucket' => $this->bucket,
                 'precision' => WritePrecision::S,
             ]);
-
-
-//
-//            dump($client);
-//
-//            $queryApi = $client->createQueryApi();
-//            dump($queryApi);
-////            $result = $queryApi->query("SHOW DATABASES");
-//
-//
-//            $writeApi = $client->createWriteApi();
-//
-//            $data = "mem,host=host1 used_percent=23.43234543";
-//
-//            $point = Point::measurement('point')
-//                ->addField('v1', 23.43234543)
-//                ->addField('v2', 33.43234543)
-//                ->addField('v3', 43.43234543)
-//                ->addField('v4', 53.43234543)
-//                ->addField('real', 77.43234543)
-//                ->time(microtime(true));
-//
-////            dd($point);
-//
-//            $writeApi->write($point, WritePrecision::S, $this->bucket, $this->organization);
-//
-//
-//
-//            dd(1);
-////            $query = "from(bucket: \"$this->bucket\") |> range(start: -1d)";
-//            $result = $queryApi->query($query);
-//            dd($result);
-
-
-//            $dsn = sprintf("influxdb://{$this->user}:{$this->password}@%s:%s/%s", $this->host, $this->port, $this->database);
-//            $this->connectedDb = Client::fromDSN($dsn);
         } catch (\Exception $e) {
             die ('Connection to database failed');
         }
@@ -141,11 +102,7 @@ class InfluxConnector extends DatabaseConnector
         }, $data);
 
         $writeApi = $this->client->createWriteApi();
-//        foreach ($points as $point) {
-//            $writeApi->write($point, WritePrecision::S, $this->bucket, $this->organization);
-//        }
         $writeApi->write($points, WritePrecision::S, $this->bucket, $this->organization);
-
     }
 
     public function createBucket(string $name): bool
@@ -153,16 +110,11 @@ class InfluxConnector extends DatabaseConnector
         $this->connect();
         $bucketsService = $this->client->createService(BucketsService::class);
 
-//        $rule = new BucketRetentionRules();
-//        $rule->setEverySeconds(3600);
-
         $bucketRequest = new PostBucketRequest();
-        $bucketRequest->setName($name)
-//            ->setRetentionRules([$rule])
-            ->setOrgId($this->findMyOrg()->getId());
+        $bucketRequest->setName($name)->setOrgId($this->findMyOrg()->getId());
 
         //create bucket
-        $respBucket = $bucketsService->postBuckets($bucketRequest);
+        $bucketsService->postBuckets($bucketRequest);
         return true;
     }
 
