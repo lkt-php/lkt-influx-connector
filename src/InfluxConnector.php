@@ -115,6 +115,7 @@ class InfluxConnector extends DatabaseConnector
 
         //create bucket
         $bucketsService->postBuckets($bucketRequest);
+        $this->cachedBuckedExists[$name] = true;
         return true;
     }
 
