@@ -98,24 +98,6 @@ class InfluxConnector extends DatabaseConnector
             return implode(' ', $payload);
         }, $data);
 
-//        $points = array_map(function ($row) use ($measurement) {
-//            $point = Point::measurement($measurement);
-//            $timeIncluded = false;
-//            foreach ($row as $key => $datum) {
-//                if ($key === 'time') {
-//                    $point->time($datum);
-//                    $timeIncluded = true;
-//                } elseif ($key === 'tags') {
-//                    foreach ($datum as $tag => $v) $point->addTag($tag, $v);
-//                } else {
-//                    $point->addField($key, $datum);
-//                }
-//            }
-//
-//            if (!$timeIncluded) $point->time(microtime(true), WritePrecision::S);
-//            return $point;
-//        }, $data);
-
         $writeApi = $this->client->createWriteApi();
         $writeApi->write($points, WritePrecision::S, $this->bucket, $this->organization);
     }
