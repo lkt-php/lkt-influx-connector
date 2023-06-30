@@ -6,26 +6,15 @@ use InfluxDB2\Client;
 use InfluxDB2\Model\Organization;
 use InfluxDB2\Model\PostBucketRequest;
 use InfluxDB2\Model\WritePrecision;
-use InfluxDB2\Point;
 use InfluxDB2\Service\BucketsService;
 use InfluxDB2\Service\OrganizationsService;
 use Lkt\DatabaseConnectors\Cache\QueryCache;
 use Lkt\Factory\Schemas\ComputedFields\AbstractComputedField;
 use Lkt\Factory\Schemas\Fields\AbstractField;
-use Lkt\Factory\Schemas\Fields\BooleanField;
-use Lkt\Factory\Schemas\Fields\DateTimeField;
-use Lkt\Factory\Schemas\Fields\EmailField;
-use Lkt\Factory\Schemas\Fields\FileField;
-use Lkt\Factory\Schemas\Fields\FloatField;
-use Lkt\Factory\Schemas\Fields\ForeignKeyField;
-use Lkt\Factory\Schemas\Fields\HTMLField;
-use Lkt\Factory\Schemas\Fields\IntegerField;
 use Lkt\Factory\Schemas\Fields\JSONField;
 use Lkt\Factory\Schemas\Fields\PivotField;
 use Lkt\Factory\Schemas\Fields\RelatedField;
 use Lkt\Factory\Schemas\Fields\RelatedKeysField;
-use Lkt\Factory\Schemas\Fields\StringField;
-use Lkt\Factory\Schemas\Fields\UnixTimeStampField;
 use Lkt\Factory\Schemas\Schema;
 use Lkt\QueryBuilding\Query;
 
@@ -75,7 +64,7 @@ class InfluxConnector extends DatabaseConnector
         return $this;
     }
 
-    public function write(array $data)
+    public function write(array $data, string $measurement = 'point')
     {
         $this->connect();
 
@@ -83,23 +72,49 @@ class InfluxConnector extends DatabaseConnector
             $this->createBucket($this->bucket);
         }
 
-        $points = array_map(function ($row) {
-            $point = Point::measurement('point');
-            $timeIncluded = false;
-            foreach ($row as $key => $datum) {
-                if ($key === 'time') {
-                    $point->time($datum);
-                    $timeIncluded = true;
-                } elseif ($key === 'tags') {
-                    foreach ($datum as $tag => $v) $point->addTag($tag, $v);
-                } else {
-                    $point->addField($key, $datum);
-                }
+        if (!$measurement) $measurement = 'point';
+
+        $points = array_map(function (&$row) use ($measurement) {
+
+            $payload = [$measurement];
+            $seconds = isset($row['time']) ? $row['time'] : microtime(true);
+            unset($row['time']);
+
+            if (isset($row['tags']) and is_array($row['tags'])) {
+                $tags = [];
+                foreach ($row['tags'] as $tag => $v) $tags[] = "$tag=$v";
+                $payload[0] .= ','.implode(',', $tags);
+                unset($row['tags']);
             }
 
-            if (!$timeIncluded) $point->time(microtime(true));
-            return $point;
+            $fields = [];
+            foreach ($row as $key => $datum) $fields[] = "$key=$datum";
+
+            if (count($fields) > 0) {
+                $payload[] = implode(',', $fields);
+            }
+
+            $payload[] = $seconds;
+            return implode(' ', $payload);
         }, $data);
+
+//        $points = array_map(function ($row) use ($measurement) {
+//            $point = Point::measurement($measurement);
+//            $timeIncluded = false;
+//            foreach ($row as $key => $datum) {
+//                if ($key === 'time') {
+//                    $point->time($datum);
+//                    $timeIncluded = true;
+//                } elseif ($key === 'tags') {
+//                    foreach ($datum as $tag => $v) $point->addTag($tag, $v);
+//                } else {
+//                    $point->addField($key, $datum);
+//                }
+//            }
+//
+//            if (!$timeIncluded) $point->time(microtime(true), WritePrecision::S);
+//            return $point;
+//        }, $data);
 
         $writeApi = $this->client->createWriteApi();
         $writeApi->write($points, WritePrecision::S, $this->bucket, $this->organization);
@@ -154,7 +169,7 @@ class InfluxConnector extends DatabaseConnector
         return false;
     }
 
-    public function read(array $filter = [], string $start = '1970-01-01T00:00:00.000000001Z', ?string $last = null): array
+    public function read(array $filter = [], ?string $start = null, ?string $last = null, ?string $measurement = null): array
     {
         $this->connect();
 
@@ -163,6 +178,7 @@ class InfluxConnector extends DatabaseConnector
         }
 
         $range = [];
+        if (!$start) $start = '1970-01-01T00:00:00.000000001Z';
         $start = trim($start);
         $last = trim($last);
         if ($start !== '') $range[] = "start: $start";
@@ -173,6 +189,8 @@ class InfluxConnector extends DatabaseConnector
 
         if ($rangeStr !== '') $auxQuery[] = "range({$rangeStr})";
         if (count($filter) > 0) foreach ($filter as $value) $auxQuery[] = $value;
+
+        if ($measurement) $auxQuery[] = 'filter(fn: (r) => r["_measurement"] == "'.$measurement.'")';
 
         $query = implode(' |> ', $auxQuery);
 
@@ -186,11 +204,15 @@ class InfluxConnector extends DatabaseConnector
 
         foreach ($tables as $table) {
             foreach ($table->records as $record) {
-                $time = $record->getTime();
                 $field = $record->getField();
                 $value = $record->getValue();
-                if (!isset($r[$time])) $r[$time] = ['time' => $time];
-                $r[$time][$field] = $value;
+                try {
+                    $time = $record->getTime();
+                    if (!isset($r[$time])) $r[$time] = ['time' => $time];
+                    $r[$time][$field] = $value;
+                } catch (\RuntimeException $exception) {
+                    $r[0][$field] = $value;
+                }
             }
         }
 
@@ -312,183 +334,12 @@ class InfluxConnector extends DatabaseConnector
 
     public function getQuery(Query $builder, string $type, string $countableField = null): string
     {
-        $whereString = $builder->getQueryWhere();
-
-        switch ($type) {
-            case 'select':
-            case 'selectDistinct':
-            case 'count':
-                $from = [];
-                foreach ($builder->getJoins() as $join) {
-                    $from[] = (string)$join;
-                }
-
-                $joinedWhere = [];
-                $joinedBuilders = $builder->getJoinedBuilders();
-                if (count($joinedBuilders) > 0) {
-                    foreach ($joinedBuilders as $key => $joinedBuilder) {
-                        $joinData = $builder->getJoinedBuildersRelation($key);
-                        $from[] = $joinedBuilder->getJoinString($joinData[0], $joinData[1], $builder->formatJoinedColumn($joinData[2]));
-                    }
-                }
-                $fromString = implode(' ', $from);
-                $fromString = str_replace('{{---LKT_PARENT_TABLE---}}', $builder->getTable(), $fromString);
-
-                if (count($joinedWhere) > 0) {
-                    $whereString = implode(' AND ', [$whereString, implode(' AND ', $joinedWhere)]);
-                }
-
-                $distinct = '';
-
-                if ($type === 'selectDistinct') {
-                    $distinct = 'DISTINCT';
-                    $type = 'select';
-                } elseif ($type === 'count') {
-                    $distinct = 'DISTINCT';
-                }
-
-                $tableAlias = $builder->getTableAlias();
-                $asTableAlias = $builder->hasTableAlias() ? " AS {$tableAlias} " : '';
-
-                if ($type === 'select') {
-                    $columns = $this->buildColumns($builder);
-                    $orderBy = '';
-                    $pagination = '';
-
-                    if ($builder->hasOrder()) {
-                        $orderBy = " ORDER BY {$builder->getOrder()}";
-                    }
-
-                    if ($builder->hasPagination()) {
-                        $p = $builder->getPage() * $builder->getLimit();
-                        $pagination = " LIMIT {$p}, {$builder->getLimit()}";
-
-                    } elseif ($builder->hasLimit()) {
-                        $pagination = " LIMIT {$builder->getLimit()}";
-                    }
-
-
-                    $r = "SELECT {$distinct} {$columns} FROM {$builder->getTable()}{$asTableAlias} {$fromString} WHERE 1 {$whereString} {$orderBy} {$pagination}";
-                    $r = str_replace('DISTINCT DISTINCT', 'DISTINCT', $r);
-                    return $r;
-                }
-
-                if ($type === 'count') {
-                    return "SELECT COUNT({$distinct} {$countableField}) AS Count FROM {$builder->getTable()}{$asTableAlias} {$fromString} WHERE 1 {$whereString}";
-                }
-                return '';
-
-            case 'update':
-            case 'insert':
-                $data = $this->makeUpdateParams($builder->getData());
-
-                if ($type === 'update') {
-                    return "UPDATE {$builder->getTable()} SET {$data} WHERE 1 {$whereString}";
-                }
-
-                if ($type === 'insert') {
-                    return "INSERT INTO {$builder->getTable()} SET {$data}";
-                }
-                return '';
-
-            case 'delete':
-                return "DELETE FROM {$builder->getTable()} WHERE 1 {$whereString}";
-
-            default:
-                return '';
-        }
+        return '';
     }
 
     public function prepareDataToStore(Schema $schema, array $data): array
     {
-        $fields = $schema->getAllFields();
-        $parsed = [];
-
-        foreach ($fields as $column => $field) {
-            $columnKey = $column;
-            if ($field instanceof ForeignKeyField) {
-                $columnKey .= 'Id';
-            }
-            if (array_key_exists($columnKey, $data)) {
-                $value = $data[$columnKey];
-
-                $compress = $field instanceof JSONField && $field->isCompressed();
-
-                if ($field instanceof StringField
-                    || $field instanceof EmailField
-                    || $field instanceof RelatedKeysField
-                    || $field instanceof ForeignKeyField
-                ) {
-                    $r = trim($value);
-                    if ($compress) {
-                        $value = "COMPRESS('{$r}')";
-                    } else {
-                        $value = $r;
-                    }
-                }
-
-                if ($field instanceof HTMLField) {
-                    $r = $this->escapeDatabaseCharacters($value);
-                    if ($compress) {
-                        $value = "COMPRESS('{$r}')";
-                    } else {
-                        $value = $r;
-                    }
-                }
-
-                if ($field instanceof BooleanField) {
-                    $value = $value === true ? 1 : 0;
-                }
-
-                if ($field instanceof IntegerField) {
-                    $value = (int)$value;
-                }
-
-                if ($field instanceof FloatField) {
-                    $value = (float)$value;
-                }
-
-                if ($field instanceof UnixTimeStampField) {
-                    if ($value instanceof \DateTime) {
-                        $value = strtotime($value->format('Y-m-d H:i:s'));
-                    } else {
-                        $value = 0;
-                    }
-                }
-
-                if ($field instanceof DateTimeField) {
-                    if ($value instanceof \DateTime) {
-                        $value = $value->format('Y-m-d H:i:s');
-                    } else {
-                        $value = '0000-00-00 00:00:00';
-                    }
-                }
-
-                if ($field instanceof FileField) {
-                    if (is_object($value)) {
-                        $value = $value->name;
-                    } else {
-                        $value = '';
-                    }
-                }
-
-                if ($field instanceof JSONField) {
-                    if (is_array($value)) {
-                        $v = htmlspecialchars(json_encode($value), JSON_UNESCAPED_UNICODE | ENT_QUOTES, 'UTF-8');
-                        $v = $this->escapeDatabaseCharacters($v);
-
-                        if ($compress) {
-                            $v = "COMPRESS('{$v}')";
-                        }
-                        $value = $v;
-                    }
-                }
-
-                $parsed[$field->getColumn()] = $value;
-            }
-        }
-
-        return $parsed;
+        return [];
     }
 
     public function setToken(string $token): static
