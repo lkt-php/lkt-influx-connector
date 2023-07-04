@@ -17,6 +17,7 @@ use Lkt\Factory\Schemas\Fields\RelatedField;
 use Lkt\Factory\Schemas\Fields\RelatedKeysField;
 use Lkt\Factory\Schemas\Schema;
 use Lkt\QueryBuilding\Query;
+use function Lkt\Tools\Parse\clearInput;
 
 class InfluxConnector extends DatabaseConnector
 {
@@ -88,7 +89,14 @@ class InfluxConnector extends DatabaseConnector
             }
 
             $fields = [];
-            foreach ($row as $key => $datum) $fields[] = "$key=$datum";
+            foreach ($row as $key => $datum) {
+                if (is_string($datum)) {
+                    $d = clearInput($datum);
+                    $fields[] = "$key=\"$d\"";
+                } else {
+                    $fields[] = "$key=$datum";
+                }
+            }
 
             if (count($fields) > 0) {
                 $payload[] = implode(',', $fields);
