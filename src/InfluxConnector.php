@@ -1,6 +1,6 @@
 <?php
 
-namespace Lkt\DatabaseConnectors;
+namespace Lkt\Connectors;
 
 use InfluxDB2\Client;
 use InfluxDB2\Model\Organization;
@@ -8,7 +8,7 @@ use InfluxDB2\Model\PostBucketRequest;
 use InfluxDB2\Model\WritePrecision;
 use InfluxDB2\Service\BucketsService;
 use InfluxDB2\Service\OrganizationsService;
-use Lkt\DatabaseConnectors\Cache\QueryCache;
+use Lkt\Connectors\Cache\QueryCache;
 use Lkt\Factory\Schemas\ComputedFields\AbstractComputedField;
 use Lkt\Factory\Schemas\Fields\AbstractField;
 use Lkt\Factory\Schemas\Fields\JSONField;
@@ -34,13 +34,33 @@ class InfluxConnector extends DatabaseConnector
     protected array $cachedBuckedExists = [];
     protected array $cachedOrgExists = [];
 
+
+    /** @var InfluxConnector[] */
+    protected static array $connectors = [];
+
+    public static function define(string $name): static
+    {
+        $r = new static($name);
+        DatabaseConnections::set($r);
+        static::$connectors[$name] = $r;
+        return $r;
+    }
+
+    public static function get(string $name): static
+    {
+        if (!isset(static::$connectors[$name])) {
+            throw new \Exception("Connector '{$name}' doesn't exists");
+        }
+        return static::$connectors[$name];
+    }
+
     public function setRememberTotal(string $rememberTotal): InfluxConnector
     {
         $this->rememberTotal = $rememberTotal;
         return $this;
     }
 
-    public function connect(): DatabaseConnector
+    public function connect(): static
     {
         if ($this->client !== null) return $this;
 
@@ -59,7 +79,7 @@ class InfluxConnector extends DatabaseConnector
         return $this;
     }
 
-    public function disconnect(): DatabaseConnector
+    public function disconnect(): static
     {
         $this->client = null;
         return $this;
@@ -116,7 +136,7 @@ class InfluxConnector extends DatabaseConnector
         $bucketsService = $this->client->createService(BucketsService::class);
 
         $bucketRequest = new PostBucketRequest();
-        $bucketRequest->setName($name)->setOrgId($this->findMyOrg()->getId());
+        $bucketRequest->setName($name)->setOrgId($this->findMyOrg()?->getId());
 
         //create bucket
         $bucketsService->postBuckets($bucketRequest);

@@ -2,11 +2,11 @@
   "name": "lkt/influx-connector",
   "description": "LKT InfluxDB connector",
   "type": "library",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "require": {
     "php": ">=8.1.0",
     "ext-pdo": "*",
-    "lkt/database-connector": "^2.0.0",
+    "lkt/database-connector": "^2.1",
     "lkt/locale": "^2.0",
     "lkt/query-builder": "^2.0",
     "influxdata/influxdb-client-php": "^3.2",
@@ -21,8 +21,8 @@
   "license": "MIT",
   "autoload": {
     "psr-4": {
-      "Lkt\\DatabaseConnectors\\": "src",
-      "Lkt\\DatabaseConnectors\\Tests\\": "tests"
+      "Lkt\\Connectors\\": "src",
+      "Lkt\\Connectors\\Tests\\": "tests"
     }
   },
   "config": {
