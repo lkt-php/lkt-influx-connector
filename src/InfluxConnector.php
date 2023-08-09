@@ -46,7 +46,7 @@ class InfluxConnector extends DatabaseConnector
         return $r;
     }
 
-    public static function get(string $name): static
+    public static function get(string $name): ?static
     {
         if (!isset(static::$connectors[$name])) {
             throw new \Exception("Connector '{$name}' doesn't exists");
