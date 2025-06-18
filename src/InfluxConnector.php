@@ -320,7 +320,7 @@ class InfluxConnector extends DatabaseConnector
         return $r;
     }
 
-    public function makeUpdateParams(array $params = []): string
+    public function makeUpdateParams(array $params = [], string $type = 'create'): string
     {
         $r = [];
         foreach ($params as $field => $value) {
